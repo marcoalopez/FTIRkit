@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftirkit"
+version = "0.1.0"
+description = "Estimate crystal orientation and synthesise principal axis spectra using polarized μ-FTIR data."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Marco A. Lopez-Sanchez" },
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "contourpy",
+]
+
+[project.urls]
+Homepage = "https://marcoalopez.github.io/FTIRkit/"
+Repository = "https://github.com/marcoalopez/FTIRkit"
+
+[tool.setuptools.packages.find]
+where = ["src"]
