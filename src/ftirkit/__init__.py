@@ -23,10 +23,12 @@ __version__ = "0.1.0"
 from .transmittance_model import calc_transmittance
 from .orientation.lambda_method import find_orientation_based_on_lambda
 from .orientation.spectrum_method import find_orientation_based_on_spectrum
+from .principal_spectra import synthesize_principal_spectra
 
 __all__ = [
     "calc_transmittance",
     "find_orientation_based_on_lambda",
     "find_orientation_based_on_spectrum",
+    "synthesize_principal_spectra",
     "__version__",
 ]
