@@ -1,8 +1,9 @@
 # FTIRkit — Project Overview
 
-> Snapshot of the repository structure as of 2026-06-12, after the package
-> reorganisation. Scope: package layout, module/function inventory, and
-> internal dependencies. Function correctness is **not** assessed here.
+> Snapshot of the repository structure as of 2026-07-03, after adding the
+> principal-axis spectra synthesis module. Scope: package layout,
+> module/function inventory, and internal dependencies. Function correctness
+> is **not** assessed here.
 
 FTIRkit estimates crystal orientation and synthesises principal-axis spectra
 from polarized μ-FTIR data. The code is organised as an installable Python
@@ -18,6 +19,7 @@ FTIRkit/
 │   │   ├── geometry.py            # coordinate transforms, grids, vector ops
 │   │   ├── crystallography.py     # orientations, symmetry, misorientation
 │   │   ├── spectrum_tools.py      # spectrum processing utilities
+│   │   ├── principal_spectra.py   # principal-axis spectra synthesis
 │   │   ├── synthetic.py           # synthetic FTIR data generation
 │   │   ├── plots.py               # 3D visualisation
 │   │   └── orientation/
@@ -26,9 +28,11 @@ FTIRkit/
 │   │       ├── lambda_method.py   # orientation from single-λ sections
 │   │       └── spectrum_method.py # orientation from a full spectrum
 │   └── deprecated/
-│       └── principal_spectra.py   # old principal-axis synthesis
+│       ├── principal_spectra.py           # old linear synthesis (Asimow trick)
+│       └── principal_spectra_nonlinear.py # old thickness-aware prototype
 └── tests/
-    └── smoke_test.py              # end-to-end runnable smoke test
+    ├── smoke_test.py                  # end-to-end runnable smoke test
+    └── validate_principal_spectra.py  # ground-truth validation of synthesis
 ```
 
 ## Internal dependencies
@@ -45,6 +49,8 @@ spectrum_tools ──────┤    plots               (both also use orien
 
 - `transmittance_model`, `geometry`, and `spectrum_tools` import nothing from
   the package (only NumPy/SciPy/Pandas).
+- `principal_spectra` is self-contained (only NumPy/SciPy/Pandas); it carries
+  its own copy of `build_coefficient_matrix`.
 - `crystallography` imports vector helpers from `geometry`.
 - `synthetic` imports the model, geometry helpers, and a spectrum conversion.
 - `orientation/*` imports the model, geometry, crystallography,
@@ -52,7 +58,8 @@ spectrum_tools ──────┤    plots               (both also use orien
 - `plots` imports vector helpers from `geometry`.
 
 Top-level re-exports (`from ftirkit import ...`): `calc_transmittance`,
-`find_orientation_based_on_lambda`, `find_orientation_based_on_spectrum`.
+`find_orientation_based_on_lambda`, `find_orientation_based_on_spectrum`,
+`synthesize_principal_spectra`.
 Heavier modules (`plots`, `synthetic`) are imported on demand.
 
 ---
@@ -101,6 +108,23 @@ Heavier modules (`plots`, `synthetic`) are imported on demand.
 | `absorbance_to_transmittance(absorbance, clip)` | Convert absorbance to transmittance, T = 10^(−A), with optional clipping to (0, 1]. |
 | `abs_to_trans_batch(spectra, clip)` | DataFrame wrapper for `absorbance_to_transmittance` over all spectrum columns. |
 | `transmittance_to_absorbance(transmittance, clip)` | Convert transmittance to absorbance, A = −log10(T), with optional clipping. |
+
+### `principal_spectra.py` — principal-axis spectra synthesis
+
+(Method of Asimow et al., 2006, with physically correct thickness handling
+and a numerically robust transmittance→absorbance back-transformation)
+
+| Function | Description |
+|---|---|
+| `synthesize_principal_spectra(spectra, theta_deg, phi_deg, thickness_mm, reference_thickness_mm, method, thickness_rtol, transmittance_floor, noise_std_T, censor_factor, robust, loss_scale)` | Synthesise principal-axis absorbances (Aa, Ab, Ac) at a reference thickness from a set of polarized absorbance spectra. Solves in transmittance (where the Asimow mixing model is valid), fitting principal absorption coefficients per mm at each wavenumber. `method="auto"` uses a fast bounded **linear** solve when all thicknesses agree within `thickness_rtol`, else a bounded **nonlinear** fit with each spectrum at its own thickness (no invalid pre-normalisation of mixed spectra). Returns propagated 1σ uncertainties (`A*_sigma`), censoring flags (`A*_censored`, True = lower bound only), per-wavenumber `rms_residual`, and fit diagnostics in `DataFrame.attrs`. |
+| `build_coefficient_matrix(theta_rad, phi_rad)` | Geometric weight (design) matrix of the Asimow model; columns are the weights on Ta, Tb, Tc (cos²θ sin²φ, sin²θ sin²φ, cos²φ); rows sum to 1. |
+| `_validate_synthesize_principal_spectra(...)` *(private)* | Input validation helper for `synthesize_principal_spectra` (shapes, finiteness, positivity, option domains). |
+| `_solve_linear_transmittance(weights, T_obs, t_lower)` *(private)* | Equal-thickness path: vectorised `lstsq` in transmittance, with BVLS re-solves only where the physical bounds [t_lower, 1] are violated. |
+| `_linearized_alpha_guess(weights, d_mm, A_meas, alpha_max)` *(private)* | Initial guess for the absorption coefficients from the weak-absorption (linear-in-absorbance) approximation. |
+| `_solve_nonlinear_alpha(weights, T_obs, d_mm, alpha_guess, alpha_max, robust, loss_scale)` *(private)* | Per-wavenumber bounded nonlinear least squares (analytic Jacobian, warm-started across wavenumbers); optional soft-L1 robust loss. |
+| `_model_residuals(alpha, weights, d_mm, T_obs_row)` *(private)* | Transmittance residuals of the mixing model at one wavenumber. |
+| `_model_jacobian(alpha, weights, d_mm, T_obs_row)` *(private)* | Analytic Jacobian of `_model_residuals` w.r.t. the absorption coefficients. |
+| `_estimate_noise_level(residuals, rms_residual, n_meas, noise_std_T)` *(private)* | Robust (MAD) transmittance noise estimate and per-wavenumber residual scale used for uncertainty propagation and censoring. |
 
 ### `synthetic.py` — synthetic FTIR data generation
 
@@ -152,8 +176,11 @@ Heavier modules (`plots`, `synthetic`) are imported on demand.
 
 ### `deprecated/principal_spectra.py` — principal-axis spectra synthesis (old)
 
-Kept outside the package, untouched, for reference. Self-contained (it carries
-its own copies of `calc_transmittance` and `smooth_spectrum`).
+Kept outside the package, untouched, for reference. **Superseded by
+`ftirkit.principal_spectra`.** Self-contained (it carries its own copies of
+`calc_transmittance` and `smooth_spectrum`). Uses Asimow's thickness pre-
+normalisation and rescaling trick, which is only approximate for mixed
+spectra and can produce absorbance spikes on noisy data.
 
 | Function | Description |
 |---|---|
@@ -164,12 +191,38 @@ its own copies of `calc_transmittance` and `smooth_spectrum`).
 | `build_coefficient_matrix(theta_rad, phi_rad)` | Design matrix A for the least-squares system A·[Ta, Tb, Tc] = T_obs. |
 | `evaluate_model_fit(principal_Ts, T_measured, theta_rad, phi_rad)` | R² and RMSE of the fitted least-squares model. |
 
+### `deprecated/principal_spectra_nonlinear.py` — thickness-aware prototype (old)
+
+Kept outside the package for reference. **Superseded by
+`ftirkit.principal_spectra`**, which folds in the same thickness-aware idea
+(fitting absorption per mm) plus the linear fast path, uncertainty
+propagation, and censoring flags. Self-contained.
+
+| Function | Description |
+|---|---|
+| `build_coefficient_matrix(theta_rad, phi_rad)` | Geometric weight matrix (local copy). |
+| `estimate_principal_axis_transmittance(T_obs, theta_deg, phi_deg, thickness_mm, robust, ...)` | Per-wavenumber nonlinear fit of absorption per mm; returns 1-mm transmittances. |
+| `apply_principal_spectra_to_dataframe(Abs_spectra, theta_deg, phi_deg, thickness_mm, evaluate_model, reference_mm, robust)` | Driver returning principal T/A at a reference thickness. |
+| `calc_transmittance(principal_Ts, theta_rad, phi_rad, d)` | Mixed transmittance at thickness d from 1-mm principal transmittances. |
+| `_model_transmittance_from_alpha`, `_initial_linear_guess` *(private)* | Forward model and linearized initial guess. |
+
 ### `tests/smoke_test.py`
 
 Runnable end-to-end check (`python tests/smoke_test.py` from the repository
 root): exercises the cross-module import paths, Euler→Asimow conversion,
 synthetic spectra/section generation, both orientation solvers on synthetic
 data, and the crystal-axes plot.
+
+### `tests/validate_principal_spectra.py`
+
+Runnable ground-truth validation of `ftirkit.principal_spectra`
+(`python tests/validate_principal_spectra.py` from the repository root):
+mixes synthetic principal spectra with the Asimow model at known
+orientations/thicknesses, adds detector-like transmittance noise, and checks
+recovery within propagated uncertainties, absence of unflagged absorbance
+spikes (versus the naive lstsq+log₁₀ pipeline), correct linear/nonlinear path
+selection, censoring of saturated peaks, and the edge cases (3 spectra,
+noiseless data, `method="linear"` rejected for unequal thicknesses).
 
 ---
 
