@@ -64,11 +64,13 @@ from ftirkit.orientation.spectrum_method import find_orientation_based_on_spectr
 results2 = find_orientation_based_on_spectrum(
     standard=standard,
     spectrum=spectra_T["spec1"].to_numpy(),
-    angles="Asimow",
     algorithm="gradient",
     num_guesses=3,
 )
 assert "gradient_based" in results2
+# canonical folding (default) maps the result to the first octant
+theta_fit, phi_fit = np.degrees(results2["gradient_based"].x[:2])
+assert 0.0 <= theta_fit <= 90.0 and 0.0 <= phi_fit <= 90.0, (theta_fit, phi_fit)
 print("spectrum_method OK")
 
 # plots (fixed call sites: project_vector_onto_plane and counterclockwise_angle)

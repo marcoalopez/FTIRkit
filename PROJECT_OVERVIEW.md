@@ -160,9 +160,11 @@ and a numerically robust transmittance→absorbance back-transformation)
 
 | Function | Description |
 |---|---|
-| `find_orientation_based_on_spectrum(standard, spectrum, angles, algorithm, thickness_bound, smooth_window, num_guesses)` | Estimate Asimow angles (or Euler angles) + optional thickness from a single measured spectrum by minimising derivative misfit (L-BFGS-B multi-start and/or differential evolution). |
-| `_error_function(params, wavelengths, T_measured, Ta/Tb/Tc_values, smooth_window)` *(private)* | Objective: sum of squared differences between smoothed derivatives of measured vs. synthetic spectra. |
-| `_calc_derivative(wavelengths, values)` *(private)* | Numerical derivative dT/dλ via `np.gradient`. |
+| `find_orientation_based_on_spectrum(standard, spectrum, algorithm, thickness_bound, smooth_window, num_guesses, transmittance_range, exclude_wavenumbers, canonical_angles)` | Estimate Asimow angles (θ, φ) + optional thickness from a single measured spectrum by minimising derivative misfit (L-BFGS-B multi-start and/or differential evolution). Euler users convert separately via `convert_Euler_to_Asimow_angles`. Optional filters restrict the misfit to measured transmittances within a (min, max) range and/or exclude wavenumber ranges (restores the "squash" channel-exclusion of the original Asimow C code). By default the fitted angles are folded to their canonical first-octant representative (mmm symmetry); disable with `canonical_angles=False`. |
+| `_validate_find_orientation_based_on_spectrum(standard, spectrum, algorithm, thickness_bound, num_guesses)` *(private)* | Input validation (standard columns, spectrum grid/finiteness/range, algorithm normalisation incl. tuple input, thickness bounds). |
+| `_build_inclusion_mask(wavenumbers, T_measured, transmittance_range, exclude_wavenumbers, n_free_params)` *(private)* | Boolean mask of spectral points contributing to the misfit; validates the filter arguments and that enough points remain. |
+| `_error_function(params, wavelengths, dT_measured, Ta/Tb/Tc_values, smooth_window, include_mask)` *(private)* | Objective: sum of squared differences between the (precomputed) measured derivative and the smoothed synthetic derivative, optionally restricted to masked-in points (smoothing/derivatives always on the full grid). |
+| `_fold_result_to_canonical(result)` *(private)* | Fold the fitted Asimow angles of an OptimizeResult into the canonical first-octant representative (mmm), in place. |
 
 ### `plots.py` — visualisation
 
