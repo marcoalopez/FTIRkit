@@ -125,7 +125,9 @@ def convert_Euler_to_Asimow_angles(
         if degrees:
             theta = np.degrees(theta)
             phi   = np.degrees(phi)
-        Asimow_angles[i] = [np.around(phi, 3), np.around(theta, 3)]
+        # full precision: this function is used inside optimization
+        # objectives, where rounding would quantize the parameter space
+        Asimow_angles[i] = [phi, theta]
 
     return Asimow_angles[0] if Asimow_angles.shape[0]==1 else Asimow_angles
 
@@ -417,7 +419,8 @@ def canonical_orthorhombic_Asimow_angles(
     -------
     numpy.ndarray
         A 1D array of shape (2,) containing
-        [theta_canon_deg, phi_canon_deg].
+        [phi_canon_deg, theta_canon_deg]. Note the order: phi first,
+        then theta, consistent with `convert_Euler_to_Asimow_angles`.
 
     Raises
     ------
@@ -432,18 +435,18 @@ def canonical_orthorhombic_Asimow_angles(
     # Reorder columns: now col 0 = phi, col 1 = theta
     equivalents = equivalents[:, [1, 0]]
 
-    # Normalize theta to [0, 360) to avoid 360° vs 0° inconsistencies
-    equivalents[:, 0] = np.mod(equivalents[:, 0], 360.0)
+    # Normalize theta (column 1) to [0, 360) to avoid 360° vs 0° inconsistencies
+    equivalents[:, 1] = np.mod(equivalents[:, 1], 360.0)
 
     # Sort primarily by phi (column 0), secondarily by theta (column 1)
     # np.lexsort uses the last key as the primary key
     sort_indices = np.lexsort((equivalents[:, 1], equivalents[:, 0]))
 
-    # First entry after sorting is the canonical representative
+    # First entry after sorting is the canonical representative [phi, theta]
     canonical_pair = equivalents[sort_indices[0]]
 
     if show:
-        print(f"Canoninal angles:\n  phi = {canonical_pair[0]:.2f}\ntheta = {canonical_pair[1]:.2f}")
+        print(f"Canonical angles:\n  phi = {canonical_pair[0]:.2f}\ntheta = {canonical_pair[1]:.2f}")
 
     return canonical_pair
 
