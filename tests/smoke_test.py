@@ -50,9 +50,9 @@ print("synthetic OK:", spectra.shape, section.shape)
 # orientation (lambda method) full solver path
 from ftirkit.orientation.lambda_method import find_orientation_based_on_lambda
 results = find_orientation_based_on_lambda(
-    transmitances=section["T_values"].to_numpy(),
+    transmittances=section["T_values"].to_numpy(),
     angles2pol_deg=section["angle_deg"].to_numpy(),
-    principal_Ts=(0.5, 0.6, 0.7),
+    standard_Ts_1mm=(0.5, 0.6, 0.7),
     algorithm=["gradient"],
     num_guesses=3,
 )

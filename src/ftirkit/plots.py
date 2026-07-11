@@ -284,7 +284,7 @@ def plot_transmitance_envelope(coordinates_xyz, T_values):
     return fig, ax
 
 
-def plot_XY_section(coordonates_xy):
+def plot_XY_section(coordinates_xy):
     pass
 
 

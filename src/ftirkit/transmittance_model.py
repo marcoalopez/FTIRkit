@@ -34,7 +34,7 @@ import numpy as np
 # Function definitions
 
 def calc_transmittance(
-    standard: np.ndarray,
+    standard_Ts_1mm: np.ndarray,
     theta_rad: float,
     phi_rad: float,
     d: float = 1.0,
@@ -49,7 +49,7 @@ def calc_transmittance(
 
     Parameters
     ----------
-    standard : array-like
+    standard_Ts_1mm : array-like
         shape (3, N) containing transmittance spectra along the
         principal crystal axes (Ta, Tb, Tc).
     theta_rad : float
@@ -67,7 +67,7 @@ def calc_transmittance(
     """
 
     # Extract T values
-    Ta, Tb, Tc = standard
+    Ta, Tb, Tc = standard_Ts_1mm
 
     term_a = Ta**d * np.cos(theta_rad) ** 2 * np.sin(phi_rad) ** 2
     term_b = Tb**d * np.sin(theta_rad) ** 2 * np.sin(phi_rad) ** 2

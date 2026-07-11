@@ -242,6 +242,3 @@ noiseless data, `method="linear"` rejected for unequal thicknesses).
   nearest-wavenumber selection in `extract_section_from_spectra`; NaN
   propagation and sampling diagnostics in `interpolate_spectra`; configurable
   colormap and axis lengths in `plots`.
-- Naming consistency (deferred): `standard` vs. `principal_Ts` vs.
-  `standard_Ts_1mm` all denote the (Ta, Tb, Tc) concept; typos `transmitances`
-  and `coordonates_xy` remain in public signatures.

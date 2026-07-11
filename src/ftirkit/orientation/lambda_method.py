@@ -75,7 +75,7 @@ def extract_section_from_spectra(
 
     # TODO: input checking
 
-    # extract transmitance values for specific wavenumber
+    # extract transmittance values for specific wavenumber
     t_values = (
         spectra.query("wavenumber == @wavenumber")
         .drop(["wavenumber"], axis=1)
@@ -100,9 +100,9 @@ def extract_section_from_spectra(
 
 
 def find_orientation_based_on_lambda(
-    transmitances: np.ndarray,
+    transmittances: np.ndarray,
     angles2pol_deg: np.ndarray,
-    principal_Ts: np.ndarray,
+    standard_Ts_1mm: np.ndarray,
     algorithm: str | List[str] = "all",
     num_guesses: int = 20,
     upper_bounds: Tuple = (90., 89.99, 180.),
@@ -117,13 +117,13 @@ def find_orientation_based_on_lambda(
 
     Parameters
     ----------
-    transmitances : array-like
+    transmittances : array-like
         Transmittance measurements at a specific wavelength.
     angles2pol_deg : array-like
         The angle between the polarization direction and the specimen
         reference in degrees at which the transmittance measurements
         were taken.
-    principal_Ts : tuple of size 3
+    standard_Ts_1mm : tuple of size 3
         tuple containing the transmittance values along a-axis (Ta),
         b-axis (Tb), and c-axis (Tc). -> (Ta, Tb, Tc)
     algorithm : str or list[str], optional
@@ -152,7 +152,7 @@ def find_orientation_based_on_lambda(
 
     # organize mesurements in an Numpy array of shape (n, 3)
     measurements = np.column_stack(
-        (transmitances, angles2pol_deg, np.full_like(angles2pol_deg, 90))
+        (transmittances, angles2pol_deg, np.full_like(angles2pol_deg, 90))
     )
 
     # Set parameter bounds
@@ -183,7 +183,7 @@ def find_orientation_based_on_lambda(
             result_bfgs = minimize(
                 fun=_misfit_function,
                 x0=guess,
-                args=(measurements, principal_Ts),
+                args=(measurements, standard_Ts_1mm),
                 bounds=bounds,
                 method="L-BFGS-B",
                 **kwargs,
@@ -211,7 +211,7 @@ def find_orientation_based_on_lambda(
         result_diff = differential_evolution(
             func=_misfit_function,
             bounds=bounds,
-            args=(measurements, principal_Ts),
+            args=(measurements, standard_Ts_1mm),
             **kwargs,
         )
 
@@ -229,7 +229,7 @@ def find_orientation_based_on_lambda(
         result_anne = dual_annealing(
             func=_misfit_function,
             bounds=bounds,
-            args=(measurements, principal_Ts),
+            args=(measurements, standard_Ts_1mm),
             **kwargs,
         )
 
@@ -296,7 +296,7 @@ def bruteforce_algorithm(
 def _misfit_function(
     params: np.ndarray,
     measurements: np.ndarray,
-    principal_Ts: np.ndarray,
+    standard_Ts_1mm: np.ndarray,
 ) -> float:
     """
     Computes misfit between measured and theoretical
@@ -309,10 +309,10 @@ def _misfit_function(
         Array of length 4 containing the euler angles (extrinsic,
         Bunge convention, degrees) and the sample thickness.
     measurements : array-like
-        Measured transmitances and spherical angles respect
+        Measured transmittances and spherical angles respect
         to polarizer in the reference frame.
-    principal_Ts : array-like
-        Transmitance reference values along crystal directions
+    standard_Ts_1mm : array-like
+        Transmittance reference values along crystal directions
         a, b and c for the wavelength used.
 
     Returns
@@ -322,7 +322,7 @@ def _misfit_function(
     """
     # extract parameters
     e1, e2, e3, d = params
-    Ta, Tb, Tc = principal_Ts
+    Ta, Tb, Tc = standard_Ts_1mm
     T_measured = measurements[:, 0]
     azimuths = np.deg2rad(measurements[:, 1])
     polar = np.deg2rad(measurements[:, 2])
@@ -339,7 +339,7 @@ def _misfit_function(
 
     # estimate theoretical T values
     T_theoretical = calc_transmittance(
-        standard=(Ta, Tb, Tc), theta_rad=azimuths, phi_rad=polar, d=d
+        standard_Ts_1mm=(Ta, Tb, Tc), theta_rad=azimuths, phi_rad=polar, d=d
     )
 
     # calculate the misfit

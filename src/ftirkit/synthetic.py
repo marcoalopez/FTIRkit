@@ -134,7 +134,7 @@ def generate_spectra(
         column_names.append(col_name)
 
         spectra[col_name] = calc_transmittance(
-            standard=(ta, tb, tc),
+            standard_Ts_1mm=(ta, tb, tc),
             theta_rad=np.deg2rad(theta),
             phi_rad=np.deg2rad(phi),
             d=thickness,
@@ -204,7 +204,7 @@ def generate_section(
 
     # Calculate the transmittance envelope
     T = calc_transmittance(
-        standard=standard_Ts_1mm, theta_rad=azimuths, phi_rad=polar_ang, d=thickness
+        standard_Ts_1mm=standard_Ts_1mm, theta_rad=azimuths, phi_rad=polar_ang, d=thickness
     )
     x, y, z = sph2cart(T, azimuths, polar_ang)
 

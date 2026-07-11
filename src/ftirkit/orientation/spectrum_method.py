@@ -430,7 +430,7 @@ def _error_function(
 
     # Calculate synthetic spectrum, smooth and derive
     T_calculated = calc_transmittance(
-        standard=(Ta_values, Tb_values, Tc_values),
+        standard_Ts_1mm=(Ta_values, Tb_values, Tc_values),
         theta_rad=theta_rad,
         phi_rad=phi_rad,
         d=d,
