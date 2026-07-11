@@ -43,53 +43,69 @@ from .common import get_initial_guesses, explore_Euler_space, summarize_results
 
 def extract_section_from_spectra(
     spectra: pd.DataFrame,
-    angles2pol_deg: np.array,
-    wavenumber: float = 1987.29,
+    angles2pol_deg: np.ndarray,
+    wavenumber: float | List[float] | np.ndarray = 1987.29,
 ) -> pd.DataFrame:
     """
-    Extract a section of the transmittance envelope
-    from a set of spectra at a specific wavenumber
-    and returns a data frame containing two columns:
-    the transmittance values and the angle to the
-    polariser in degrees. The data frame is ready
+    Extract one or more sections of the transmittance envelope
+    from a set of spectra, one section per requested wavenumber.
+    For each requested wavenumber the closest wavenumber available
+    in the spectra is used, so exact values are not required. It
+    returns a data frame with one transmittance column per
+    wavenumber, named "T_<wavenumber>", plus a common column with
+    the angle to the polariser in degrees. The data frame is ready
     to be used for section-based orientation analysis.
-    
-    TODO: automatically select the wavenumber closest
-    to the chosen number without having to specify the
-    exact number
 
     Parameters
     ----------
     spectra : pd.DataFrame
-        _description_
-    angles2pol_deg : np.array | pd.Series
-        _description_
-    wavenumber : float, optional
-        _description_, by default 1987.29
+        Transmittance spectra as a function of wavenumber. It must
+        contain a "wavenumber" column plus one column per measured
+        spectrum.
+    angles2pol_deg : array-like
+        The angle between the polarization direction and the
+        specimen reference in degrees, one per spectrum (i.e. per
+        non-wavenumber column of ``spectra``).
+    wavenumber : float or array-like of float, optional
+        Wavenumber(s) at which the section(s) are extracted,
+        by default 1987.29.
 
     Returns
     -------
     pd.DataFrame
-        _description_
+        One "T_<wavenumber>" column per requested wavenumber (named
+        after the closest wavenumber actually found in the spectra)
+        and a common "ang2pol_deg" column.
     """
 
-    # TODO: input checking
-
-    # extract transmittance values for specific wavenumber
-    t_values = (
-        spectra.query("wavenumber == @wavenumber")
-        .drop(["wavenumber"], axis=1)
-        .to_numpy()
-        .flatten()
-    )
-
-    # check
-    if len(t_values) != len(angles2pol_deg):
+    # input checking
+    if "wavenumber" not in spectra.columns:
+        raise KeyError("`spectra` must contain a 'wavenumber' column.")
+    angles2pol_deg = np.asarray(angles2pol_deg)
+    if spectra.shape[1] - 1 != angles2pol_deg.size:
         raise ValueError(
             "The number of angles must correspond to the number of spectra. Check your inputs!"
         )
 
-    table = {"T_values": t_values, "ang2pol_deg": angles2pol_deg}
+    # find the closest available wavenumber to each requested value
+    requested = np.atleast_1d(np.asarray(wavenumber, dtype=float))
+    available = spectra["wavenumber"].to_numpy(dtype=float)
+    nearest_indexes = np.abs(available[:, np.newaxis] - requested).argmin(axis=0)
+
+    if np.unique(nearest_indexes).size != nearest_indexes.size:
+        raise ValueError(
+            "Two or more requested wavenumbers map to the same spectral "
+            "point. Request more widely spaced wavenumbers."
+        )
+
+    # extract transmittance values (one row per selected wavenumber)
+    t_values = spectra.drop(columns="wavenumber").to_numpy()[nearest_indexes]
+
+    table = {
+        f"T_{available[index]:.2f}": row
+        for index, row in zip(nearest_indexes, t_values)
+    }
+    table["ang2pol_deg"] = angles2pol_deg
 
     return pd.DataFrame(table)
 
@@ -245,6 +261,121 @@ def find_orientation_based_on_lambda(
     return results
 
 
+def find_orientation_based_on_multiple_lambdas(
+    transmittances: np.ndarray,
+    angles2pol_deg: np.ndarray,
+    standard_Ts_1mm: np.ndarray,
+    upper_bounds: Tuple = (90., 89.99, 180.),
+    thickness_bounds: Tuple[float, float] | None = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Determine the crystallographic orientation from sets of polarised
+    FTIR measurements taken at several wavelengths, fitted
+    simultaneously with the differential evolution algorithm.
+
+    The minimised quantity is the sum of the single-wavelength
+    misfits over all wavelengths. This makes the estimate more
+    robust than the single-wavelength method, as wavelengths that
+    poorly constrain a particular orientation are compensated by
+    the others.
+
+    Parameters
+    ----------
+    transmittances : array-like of shape (n_wavelengths, n_measurements)
+        Transmittance measurements, one row per wavelength.
+    angles2pol_deg : array-like of shape (n_wavelengths, n_measurements)
+        The angle between the polarization direction and the specimen
+        reference in degrees at which each measurement in
+        ``transmittances`` was taken.
+    standard_Ts_1mm : array-like of shape (n_wavelengths, 3)
+        The standard transmittance values (1 mm) along a-axis (Ta),
+        b-axis (Tb), and c-axis (Tc), one (Ta, Tb, Tc) row per
+        wavelength, in the same order as ``transmittances``.
+    upper_bounds : tuple, optional
+        the upper bounds of Euler angles defining the fundamental
+        zone of solutions, by default (90., 89.99, 180.)
+    thickness_bounds : Tuple of size 2 or None, optional
+        Whether to fit thickness as well, defaults to None
+
+    Returns
+    -------
+    dict
+        a Python dict with the minimization output keyed by
+        "differential_evol", plus the misfit of each wavelength at
+        the best-fit parameters keyed by "per_wavelength_misfit"
+        (array of shape (n_wavelengths,), same order as the inputs).
+    """
+
+    # Sanity checks
+    transmittances, angles2pol_deg, standard_Ts_1mm = (
+        _validate_find_orientation_based_on_multiple_lambdas(
+            transmittances, angles2pol_deg, standard_Ts_1mm
+        )
+    )
+
+    # organize all measurements in a Numpy array of shape (n, 3). The
+    # misfit is summed over all points, so all wavelengths are fitted
+    # simultaneously with a single orientation.
+    measurements = np.column_stack(
+        (
+            transmittances.ravel(),
+            angles2pol_deg.ravel(),
+            np.full(transmittances.size, 90.0),
+        )
+    )
+
+    # repeat each (Ta, Tb, Tc) row to match its measurements so the
+    # single-wavelength misfit function can be reused unchanged
+    num_measurements = transmittances.shape[1]
+    Ta, Tb, Tc = np.repeat(standard_Ts_1mm, num_measurements, axis=0).T
+
+    # Set parameter bounds
+    bounds = [
+        (0, upper_bounds[0]),  # euler1
+        (0, upper_bounds[1]),  # euler2
+        (0, upper_bounds[2]),  # euler3
+    ]
+    if thickness_bounds is None:
+        thickness_bounds = (0.9999, 1.0001)  # set thickness to (almost) 1
+    bounds.append(thickness_bounds)
+
+    # MINIMIZATION BASED ON differential evolution algorithm
+    start_time = time.time()
+
+    result_diff = differential_evolution(
+        func=_misfit_function,
+        bounds=bounds,
+        args=(measurements, (Ta, Tb, Tc)),
+        **kwargs,
+    )
+
+    elapsed_time = time.time() - start_time
+    results = {"differential_evol": result_diff}
+
+    summarize_results(result_diff, elapsed_time, alg_name="diffEvol")
+
+    # per-wavelength misfit breakdown (diagnostic): a wavelength with
+    # a misfit far above the others suggests a systematic problem
+    # with its data or standard values
+    misfit_per_lambda = _per_wavelength_misfits(
+        result_diff.x, transmittances, angles2pol_deg, standard_Ts_1mm
+    )
+    results["per_wavelength_misfit"] = misfit_per_lambda
+
+    total_misfit = misfit_per_lambda.sum()
+    print("PER-WAVELENGTH MISFIT BREAKDOWN:")
+    for index, misfit in enumerate(misfit_per_lambda):
+        share = 100.0 * misfit / total_misfit if total_misfit > 0 else 0.0
+        print(f"wavelength {index + 1}: {misfit:.3e} ({share:.1f}% of total)")
+    print(" ")
+
+    print("DONE")
+    print(" ")
+
+    return results
+
+
 def bruteforce_algorithm(
     measurements,
     standard_Ts_1mm,
@@ -291,6 +422,87 @@ def bruteforce_algorithm(
 # ============================================================================ #
 # AUXILIARY FUNCTIONS. Not intended for direct user access.                    #
 # ============================================================================ #
+
+
+def _validate_find_orientation_based_on_multiple_lambdas(
+    transmittances: np.ndarray,
+    angles2pol_deg: np.ndarray,
+    standard_Ts_1mm: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Validate the inputs of `find_orientation_based_on_multiple_lambdas`.
+
+    Returns
+    -------
+    tuple
+        (transmittances, angles2pol_deg, standard_Ts_1mm) converted
+        to 2D numpy float arrays.
+    """
+
+    transmittances = np.asarray(transmittances, dtype=float)
+    angles2pol_deg = np.asarray(angles2pol_deg, dtype=float)
+    standard_Ts_1mm = np.asarray(standard_Ts_1mm, dtype=float)
+
+    if transmittances.ndim != 2:
+        raise ValueError(
+            "`transmittances` must be a 2D array of shape (n_wavelengths, "
+            f"n_measurements); got shape {transmittances.shape}."
+        )
+    if angles2pol_deg.shape != transmittances.shape:
+        raise ValueError(
+            f"`angles2pol_deg` {angles2pol_deg.shape} and `transmittances` "
+            f"{transmittances.shape} must have the same shape."
+        )
+    if standard_Ts_1mm.shape != (transmittances.shape[0], 3):
+        raise ValueError(
+            "`standard_Ts_1mm` must have shape (n_wavelengths, 3) = "
+            f"({transmittances.shape[0]}, 3); got {standard_Ts_1mm.shape}."
+        )
+
+    return transmittances, angles2pol_deg, standard_Ts_1mm
+
+
+def _per_wavelength_misfits(
+    params: np.ndarray,
+    transmittances: np.ndarray,
+    angles2pol_deg: np.ndarray,
+    standard_Ts_1mm: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute the misfit of each wavelength separately at the given
+    parameters. The sum over wavelengths equals the combined misfit
+    minimized by `find_orientation_based_on_multiple_lambdas`.
+
+    Parameters
+    ----------
+    params : array-like
+        Array of length 4 containing the euler angles (extrinsic,
+        Bunge convention, degrees) and the sample thickness.
+    transmittances : numpy.ndarray of shape (n_wavelengths, n_measurements)
+        Transmittance measurements, one row per wavelength.
+    angles2pol_deg : numpy.ndarray of shape (n_wavelengths, n_measurements)
+        The angle to the polarizer in degrees for each measurement.
+    standard_Ts_1mm : numpy.ndarray of shape (n_wavelengths, 3)
+        The standard (Ta, Tb, Tc) values, one row per wavelength.
+
+    Returns
+    -------
+    numpy.ndarray
+        The misfit of each wavelength, shape (n_wavelengths,).
+    """
+
+    num_measurements = transmittances.shape[1]
+    misfits = np.empty(transmittances.shape[0])
+
+    for index, (T_row, angles_row, Ts) in enumerate(
+        zip(transmittances, angles2pol_deg, standard_Ts_1mm)
+    ):
+        measurements = np.column_stack(
+            (T_row, angles_row, np.full(num_measurements, 90.0))
+        )
+        misfits[index] = _misfit_function(params, measurements, Ts)
+
+    return misfits
 
 
 def _misfit_function(

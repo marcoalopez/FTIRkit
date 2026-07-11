@@ -1,9 +1,10 @@
 # FTIRkit — Project Overview
 
-> Snapshot of the repository structure as of 2026-07-03, after adding the
-> principal-axis spectra synthesis module. Scope: package layout,
-> module/function inventory, and internal dependencies. Function correctness
-> is **not** assessed here.
+> Snapshot of the repository structure as of 2026-07-11, after the API naming
+> cleanup (`standard_Ts_1mm`, `transmittances`) and the addition of the
+> multi-wavelength orientation solver. Scope: package layout, module/function
+> inventory, and internal dependencies. Function correctness is **not**
+> assessed here.
 
 FTIRkit estimates crystal orientation and synthesises principal-axis spectra
 from polarized μ-FTIR data. The code is organised as an installable Python
@@ -25,7 +26,7 @@ FTIRkit/
 │   │   └── orientation/
 │   │       ├── __init__.py
 │   │       ├── common.py          # shared optimisation scaffolding
-│   │       ├── lambda_method.py   # orientation from single-λ sections
+│   │       ├── lambda_method.py   # orientation from single-/multi-λ sections
 │   │       └── spectrum_method.py # orientation from a full spectrum
 │   └── deprecated/
 │       ├── principal_spectra.py           # old linear synthesis (Asimow trick)
@@ -58,8 +59,8 @@ spectrum_tools ──────┤    plots               (both also use orien
 - `plots` imports vector helpers from `geometry`.
 
 Top-level re-exports (`from ftirkit import ...`): `calc_transmittance`,
-`find_orientation_based_on_lambda`, `find_orientation_based_on_spectrum`,
-`synthesize_principal_spectra`.
+`find_orientation_based_on_lambda`, `find_orientation_based_on_multiple_lambdas`,
+`find_orientation_based_on_spectrum`, `synthesize_principal_spectra`.
 Heavier modules (`plots`, `synthetic`) are imported on demand.
 
 ---
@@ -70,7 +71,7 @@ Heavier modules (`plots`, `synthetic`) are imported on demand.
 
 | Function | Description |
 |---|---|
-| `calc_transmittance(standard, theta_rad, phi_rad, d)` | Asimow et al. (2006) transmittance model: T(λ,φ,θ,d) = Ta^d cos²θ sin²φ + Tb^d sin²θ sin²φ + Tc^d cos²φ, computed from principal-axis spectra (Ta, Tb, Tc). The single shared implementation used package-wide. |
+| `calc_transmittance(standard_Ts_1mm, theta_rad, phi_rad, d)` | Asimow et al. (2006) transmittance model: T(λ,φ,θ,d) = Ta^d cos²θ sin²φ + Tb^d sin²θ sin²φ + Tc^d cos²φ, computed from principal-axis spectra (Ta, Tb, Tc). The single shared implementation used package-wide. |
 
 ### `geometry.py` — coordinate systems, spherical grids, vector/rotation ops
 
@@ -143,16 +144,19 @@ and a numerically robust transmittance→absorbance back-transformation)
 | `explore_Euler_space(step, lower_bounds, upper_bounds)` | Uniform grid of Euler triplets over a (default orthorhombic mmm) fundamental zone. |
 | `summarize_results(result, elapsed_time, alg_name, angle_format, num_guesses)` | Print a summary of a minimisation result. `angle_format` selects how the parameters are reported: `"euler_deg"`, `"euler_rad"`, or `"asimow_rad"`. |
 
-### `orientation/lambda_method.py` — orientation from single-wavelength sections
+### `orientation/lambda_method.py` — orientation from wavelength sections
 
 (Method of Lopez-Sanchez & Padrón-Navarta, 2026)
 
 | Function | Description |
 |---|---|
-| `extract_section_from_spectra(spectra, angles2pol_deg, wavenumber)` | Extract transmittance values at one wavenumber from a set of spectra → DataFrame (T, angle-to-polarizer) ready for section-based analysis. *(TODO noted in code: auto-select the nearest wavenumber instead of requiring an exact match.)* |
-| `find_orientation_based_on_lambda(transmitances, angles2pol_deg, principal_Ts, algorithm, num_guesses, upper_bounds, thickness_bounds, **kwargs)` | Estimate crystal orientation (Euler angles + optional thickness) from polarized single-wavelength measurements via L-BFGS-B (multi-start), differential evolution, and/or dual annealing. |
+| `extract_section_from_spectra(spectra, angles2pol_deg, wavenumber)` | Extract transmittance values at one or more wavenumbers from a set of spectra → DataFrame with one `T_<wavenumber>` column per requested wavenumber plus a common angle-to-polarizer column, ready for section-based analysis. Each requested value snaps to the closest wavenumber available in the spectra (no exact match required); requests collapsing onto the same spectral point are rejected. |
+| `find_orientation_based_on_lambda(transmittances, angles2pol_deg, standard_Ts_1mm, algorithm, num_guesses, upper_bounds, thickness_bounds, **kwargs)` | Estimate crystal orientation (Euler angles + optional thickness) from polarized single-wavelength measurements via L-BFGS-B (multi-start), differential evolution, and/or dual annealing. |
+| `find_orientation_based_on_multiple_lambdas(transmittances, angles2pol_deg, standard_Ts_1mm, upper_bounds, thickness_bounds, **kwargs)` | Estimate crystal orientation from measurements at several wavelengths fitted simultaneously (differential evolution only). Inputs are per-wavelength rows: `transmittances` and `angles2pol_deg` of shape (n_wavelengths, n_measurements), `standard_Ts_1mm` of shape (n_wavelengths, 3). Minimises the sum of the single-wavelength misfits (more robust than any single wavelength); the results dict also carries a per-wavelength misfit breakdown under `"per_wavelength_misfit"` as a diagnostic for outlier wavelengths. |
 | `bruteforce_algorithm(measurements, standard_Ts_1mm, step)` | Grid search over Euler space for the best-fit orientation (testing/validation only). **Known issue:** it feeds 3-element Euler triplets to `_misfit_function`, which unpacks 4 parameters (angles + thickness), so it currently fails. |
-| `_misfit_function(params, measurements, principal_Ts)` *(private)* | Objective: sum of squared differences between measured and theoretical T after rotating measurements into the crystal frame. |
+| `_validate_find_orientation_based_on_multiple_lambdas(transmittances, angles2pol_deg, standard_Ts_1mm)` *(private)* | Input validation (2D shapes, matching dimensions, (n_wavelengths, 3) standard) returning float arrays. |
+| `_misfit_function(params, measurements, standard_Ts_1mm)` *(private)* | Objective: sum of squared differences between measured and theoretical T after rotating measurements into the crystal frame. Element-wise throughout, so the multi-wavelength solver reuses it unchanged on stacked measurements with per-point (Ta, Tb, Tc) arrays. |
+| `_per_wavelength_misfits(params, transmittances, angles2pol_deg, standard_Ts_1mm)` *(private)* | Misfit of each wavelength separately at given parameters; the sum over wavelengths equals the combined misfit. |
 
 ### `orientation/spectrum_method.py` — orientation from a full spectrum
 
@@ -172,7 +176,7 @@ and a numerically robust transmittance→absorbance back-transformation)
 |---|---|
 | `plot_crystal_axes(euler_angles_deg)` | 3D plot of crystal axes (a, b, c) at a given orientation, with the polarizer vector E, its projection E′, angle arcs, and the a–b plane. |
 | `plot_transmitance_envelope(coordinates_xyz, T_values)` | 3D surface plot of a transmittance envelope, coloured by T value. |
-| `plot_XY_section(coordonates_xy)` | **Stub — not implemented (`pass`).** |
+| `plot_XY_section(coordinates_xy)` | **Stub — not implemented (`pass`).** |
 | `_generate_arc_points(vector_1, vector_2, radius, num_points)` *(private)* | Points along an arc between two 3D vectors (for drawing angle arcs). |
 | `_generate_plane_points(vector1, vector2, num_points)` *(private)* | Meshgrid of points spanning the plane defined by two vectors. *(Docstring is a placeholder.)* |
 
@@ -212,7 +216,8 @@ propagation, and censoring flags. Self-contained.
 
 Runnable end-to-end check (`python tests/smoke_test.py` from the repository
 root): exercises the cross-module import paths, Euler→Asimow conversion,
-synthetic spectra/section generation, both orientation solvers on synthetic
+synthetic spectra/section generation, the single-wavelength and spectrum-based
+orientation solvers on synthetic
 data, and the crystal-axes plot.
 
 ### `tests/validate_principal_spectra.py`
@@ -234,11 +239,12 @@ noiseless data, `method="linear"` rejected for unequal thicknesses).
 - `bruteforce_algorithm` (lambda method) passes 3 parameters to a 4-parameter
   objective (see table above).
 - Placeholder docstrings (`_summary_` / `_description_`) remain in
-  `generate_section`, `extract_XY_section_ang`, `extract_section_from_spectra`,
-  `bruteforce_algorithm`, `_find_nearest`, and `_generate_plane_points`.
+  `generate_section`, `extract_XY_section_ang`, `bruteforce_algorithm`,
+  `_find_nearest`, and `_generate_plane_points`.
 - Unused scaffolding kept on purpose: `geometry._axis_angle_rotation` and
   `crystallography._euler_Asimow_misfit` (planned Euler-from-Asimow inversion).
-- TODOs in code: input checking in `smooth_spectra`, `extract_section_from_spectra`;
-  nearest-wavenumber selection in `extract_section_from_spectra`; NaN
-  propagation and sampling diagnostics in `interpolate_spectra`; configurable
-  colormap and axis lengths in `plots`.
+- TODOs in code: input checking in `smooth_spectra`; NaN propagation and
+  sampling diagnostics in `interpolate_spectra`; configurable colormap and
+  axis lengths in `plots`.
+- Multi-wavelength solver: optional inverse-variance weights per wavelength
+  planned but not yet implemented (misfit is currently an unweighted sum).
